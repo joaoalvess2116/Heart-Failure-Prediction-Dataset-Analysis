@@ -1,0 +1,504 @@
+# Heart Failure Prediction Dataset Analysis
+
+## Packages
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(gtsummary)
+library(gt)
+library(corrplot)
+library(broom)
+library(webshot2)
+```
+
+## Importing the file
+
+```{r}
+heart <- read_csv("heart.csv")
+```
+
+## Pre-Processing
+
+Serum Cholesterol values equal to 0 are clinically imposible, and as they are included in the dataset, they were removed before the statistical analysis.
+
+```{r}
+heart=heart[heart$Cholesterol!=0,]
+```
+
+## Univariate Analysis
+
+### Sample Size
+
+```{r}
+size=nrow(heart)
+```
+
+### Sample Distribution by Age
+
+```{r}
+ggplot(heart,
+       aes(x = cut(
+         Age,
+         breaks = seq(20, 80, by = 5),
+         right  = FALSE,
+         labels = paste(
+           seq(20, 75, by = 5),
+           seq(24, 79, by = 5),
+           sep = "–"
+         )
+       ))) +
+  geom_bar(fill="grey70",color="grey55") +
+  theme_minimal() +
+  labs(x = "Age Range (years)",
+       y = "Number of Patients")
+```
+
+### Sample Distribution by Sex
+
+```{r}
+sex_props=prop.table(table(heart$Sex))
+pie(table(heart$Sex),
+    labels=paste0(c("Female","Male"), " (", round(100*sex_props), "%)"),
+    col=c("pink","lightblue"),
+    border="white",
+    main="Sample Distribution by Sex",
+    radius=1,
+    cex=1.2)
+legend("right",
+       legend = c("Female", "Male"),
+       fill   = c("pink", "lightblue"),
+       bty    = "n",
+       cex=1.1)
+mtext(
+  side = 1, line = 3,
+  text = paste0(
+    "Sample Size: ", length(heart$Sex),
+    " (Female: ", table(heart$Sex)["F"], ", Male: ", table(heart$Sex)["M"], ")"
+  ),
+  cex = 0.9,
+  bty="n",
+)
+```
+
+### Incidence of each type of Chest Pain
+
+```{r}
+ggplot(heart, aes(x = ChestPainType, fill = Sex)) +
+  geom_bar(color = "black") + 
+  scale_fill_manual(values = c("F" = "pink", "M" = "lightblue")) +
+  labs(
+    x = "Chest Pain Type",
+    y = "Number of Occurrences",
+    fill = "Sex",
+    caption = "ASY = Asymptomatic   ATA = Atypical Angina   NAP = Non-anginal Pain   TA = Typical Angina"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.caption = element_text(hjust = 0.5)  # center at bottom
+  )+
+  ggtitle("Incidence of each type of Chest Pain",)+
+    theme(
+    plot.caption = element_text(hjust = 0.5),
+    plot.title   = element_text(hjust = 0.5)
+  )
+```
+
+### Summary Table
+
+```{r}
+tab1 = heart %>%
+  select(Age, RestingBP, Cholesterol, MaxHR, Oldpeak,
+         Sex, ChestPainType, RestingECG, ExerciseAngina, 
+         ST_Slope, FastingBS, HeartDisease) %>%
+  tbl_summary(
+    type=all_continuous() ~ "continuous2",
+    statistic = list(
+      all_continuous() ~ c(
+        "Median (IQR)" = "{median} ({p25}, {p75})", 
+        "Range"        = "({min}, {max})"
+      ),
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = list(
+      all_continuous() ~ 1,
+      all_categorical() ~ c(0, 0)
+    ),
+    label = c(
+      Age ~ "Age (years)",
+      RestingBP ~ "Resting Blood Pressure (mm Hg)",
+      Cholesterol ~ "Serum Cholesterol (mm/dl)",
+      MaxHR ~ "Maximum Heart Rate (bpm)",
+      Oldpeak ~ "ST Depression (Oldpeak)",
+      Sex ~ "Sex",
+      ChestPainType ~ "Chest Pain Type",
+      RestingECG ~ "Resting ECG",
+      ExerciseAngina ~ "Exercise Induced Angina",
+      ST_Slope ~ "ST Segment Slope",
+      FastingBS ~ "Fasting Blood Sugar > 120 mg/dl",
+      HeartDisease ~ "Heart Disease"
+    )
+  ) %>%
+  modify_caption("**Table 1. Characteristics of Sample**") %>%
+  modify_header(label = "**Variable**")
+tab1
+
+# Para salvar como imagem
+# gt_tab <- as_gt(tab1)
+# gtsave(gt_tab, "Table1.png")
+```
+
+## Multivariate Analysis
+
+### Checking Normality
+
+To check normality on quantitative variables (Age, RestingBP, Cholesterol, MaxHR and Oldpeak), we used the Shapiro-Wilk normality test. This is useful to choose between parametric or nonparametric tests.
+
+```{r}
+continuous_vars <- heart %>% 
+  select(Age, RestingBP, Cholesterol, MaxHR, Oldpeak)
+normality_tests <- lapply(continuous_vars, shapiro.test)
+
+sapply(normality_tests, function(x) x$p.value)
+
+#No variable has a normal distribution
+```
+
+### Age Distribution by Heart Disease
+
+```{r}
+heart_plot <- heart %>%
+  mutate(
+    HeartDisease = factor(HeartDisease, levels = c(0, 1), labels = c("No", "Yes"))
+  )
+ggplot(heart_plot, aes(x = HeartDisease, y = Age, fill = HeartDisease)) +
+  geom_boxplot() + 
+  scale_fill_manual(
+    values = c("No" = "grey70", "Yes" = "red2") 
+  ) +
+  labs(
+    title = "Age Distribution by Heart Disease Status",
+    x = "Heart Disease Status",
+    y = "Age (Years)",
+    fill = "Heart Disease"
+  ) +
+  theme_minimal()+
+  theme(legend.position = "none",
+        plot.title   = element_text(hjust = 0.5)) 
+
+#Wilcoxon Test
+wilcox.test(Age ~ HeartDisease, data=heart)
+#p-value < 0.05, H0 is rejected, Age is significantly different between groups with and without heart disease
+```
+
+### Heart Disease by Sex
+
+```{r}
+heart_plot <- heart %>%
+  mutate(
+    HeartDisease = factor(HeartDisease, levels = c(0, 1), labels = c("No", "Yes")), Sex=factor(Sex, levels=c("F","M"),labels=c("Female","Male"))
+  )
+ggplot(heart_plot, aes(x = Sex, fill = HeartDisease)) +
+  
+  geom_bar(color="black",position = "fill") +
+  scale_fill_manual(values=c("No"="grey70","Yes"="red2"))+
+  labs(
+    title = "Proportion of Heart Disease by Sex",
+    x = "Sex",
+    y = "Proportion",
+    fill = "Heart Disease") +
+  theme_minimal() +
+  theme(plot.title   = element_text(hjust = 0.5))+
+  scale_y_continuous(labels = scales::percent)
+
+#Chi-Squared Test
+chisq.test(table(heart$Sex,heart$HeartDisease))
+#p-value < 0.05, H0 is rejected, Heart Disease is significantly different between sexes
+```
+
+### Heart Disease by Type of Chest Pain
+
+```{r}
+heart_plot <- heart %>%
+  mutate(
+    HeartDisease = factor(HeartDisease, levels = c(0, 1), labels = c("No", "Yes")),
+    ChestPainType = factor(ChestPainType)
+  )
+ggplot(heart_plot, aes(x = ChestPainType, fill = HeartDisease)) +
+  
+  geom_bar(color="black",position = "fill") +
+  scale_fill_manual(values=c("No"="grey70","Yes"="red2"))+
+  labs(
+    title = "Proportion of Heart Disease by Type of Chest Pain",
+    x = "Type of Chest Pain",
+    y = "Proportion",
+    fill = "Heart Disease",
+    caption = "ASY = Asymptomatic   ATA = Atypical Angina   NAP = Non-anginal Pain   TA = Typical Angina") +
+  theme_minimal() +
+  theme(plot.title   = element_text(hjust = 0.5))+
+  scale_y_continuous(labels = scales::percent)
+```
+
+### Resting Blood Pressure by Heart Disease
+
+```{r}
+heart_plot <- heart %>%
+  mutate(
+    HeartDisease = factor(HeartDisease, levels = c(0, 1), labels = c("No", "Yes"))
+  )
+par(mfrow=c(1, 2)) 
+ggplot(heart_plot, aes(x = HeartDisease, y = RestingBP, fill = HeartDisease)) +
+  geom_boxplot() + 
+  scale_fill_manual(
+    values = c("No" = "grey70", "Yes" = "red2") 
+  ) +
+  labs(
+    title = "Resting BP by Heart Disease",
+    x = "Heart Disease Status",
+    y = "Resting BP (mm Hg)",
+    fill = "Heart Disease"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+wilcox.test(RestingBP ~ HeartDisease, data=heart)
+```
+
+### Cholesterol by Heart Disease
+
+```{r}
+ggplot(heart_plot, aes(x = HeartDisease, y = Cholesterol, fill = HeartDisease)) +
+  geom_boxplot() + 
+  scale_fill_manual(
+    values = c("No" = "grey70", "Yes" = "red2") 
+  ) +
+  labs(
+    title = "Cholesterol by Heart Disease",
+    x = "Heart Disease Status",
+    y = "Cholesterol (mm/dl)",
+    fill = "Heart Disease"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none", plot.title   = element_text(hjust = 0.5))
+par(mfrow=c(1, 1))
+
+wilcox.test(Cholesterol ~ HeartDisease, data=heart)
+```
+
+### Max Heart Rate by Age
+
+```{r}
+heart_scatter <- heart %>%
+  mutate(HeartDisease = factor(HeartDisease, labels = c("No", "Yes")))
+scatter_plot_multivariavel <- ggplot(heart_scatter, aes(x = Age, y = MaxHR, color = HeartDisease)) +
+  geom_point(alpha = 0.6) + 
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_manual(values = c("No" = "grey65", "Yes" = "red2")) +
+  labs(
+    title = "Max Heart Rate by Age",
+    x = "Age (years)",
+    y = "Max Heart Rate (BPM)",
+    color = "Heart Disease"
+  ) +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))
+scatter_plot_multivariavel
+```
+
+### Heart Disease by Exercise Angina
+
+```{r}
+heart_plot <- heart %>%
+  mutate(
+    HeartDisease = factor(HeartDisease, levels = c(0, 1), labels = c("No", "Yes")),
+    ExerciseAngina = factor(ExerciseAngina, levels = c(0, 1), labels = c("No", "Yes")),
+    ST_Slope = factor(ST_Slope)
+  )
+ggplot(heart_plot, aes(x = ExerciseAngina, fill = HeartDisease)) +
+  geom_bar(color="black",position="fill") +
+  scale_fill_manual(values = c("No" = "grey70", "Yes" = "red2")) +
+  labs(
+    title = "Heart Disease Proportion by Exercise Angina",
+    x = "Exercise Angina",
+    y = "Proportion",
+    fill = "Heart Disease"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::percent)
+
+chisq.test(table(heart$ExerciseAngina, heart$HeartDisease))
+```
+
+### Heart Disease by ST Slope
+
+```{r}
+ggplot(heart_plot, aes(x = ST_Slope, fill = HeartDisease)) +
+  geom_bar(color="black", position = "fill") +
+  scale_fill_manual(values = c("No" = "grey70", "Yes" = "red2")) +
+  labs(
+    title = "Heart Disease Proportion by ST Slope",
+    x = "ST Slope (Peak Exercise)",
+    y = "Proportion",
+    fill = "Heart Disease"
+  ) +
+  theme_minimal() + theme(plot.title   = element_text(hjust = 0.5))+
+  scale_y_continuous(labels = scales::percent)
+
+chisq.test(table(heart$ST_Slope, heart$HeartDisease))
+```
+
+### Summary Table by Heart Disease
+
+```{r}
+heart_bivariavel <- heart %>%
+  mutate(HeartDisease = factor(HeartDisease, 
+                               levels = c(0, 1), 
+                               labels = c("No", "Yes"))) %>%
+
+  select(Age, RestingBP, Cholesterol, MaxHR, Oldpeak,
+         Sex, ChestPainType, RestingECG, ExerciseAngina, 
+         ST_Slope, FastingBS, HeartDisease) 
+  
+tabela_bivariada = heart_bivariavel %>%
+  tbl_summary(
+    by = HeartDisease,
+    
+    statistic = list(
+      all_continuous() ~ c(
+        "Median (IQR)" = "{median} ({p25}, {p75})", 
+        "Range"        = "({min}, {max})"
+      ),
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    
+    type = all_continuous() ~ "continuous2",
+    digits = list(
+      all_continuous() ~ 1,      
+      all_categorical() ~ c(0, 1) 
+    ),
+    
+    label = list(
+      Age ~ "Age (years)",
+      RestingBP ~ "Resting Blood Pressure (mm Hg)",
+      Cholesterol ~ "Serum Cholesterol (mm/dl)",
+      MaxHR ~ "Maximum Heart Rate (bpm)",
+      Oldpeak ~ "ST Depression (Oldpeak)",
+      Sex ~ "Sex",
+      ChestPainType ~ "Chest Pain Type",
+      RestingECG ~ "Resting ECG",
+      ExerciseAngina ~ "Exercise Induced Angina",
+      ST_Slope ~ "ST Segment Slope",
+      FastingBS ~ "Fasting Blood Sugar > 120 mg/dl"
+    )
+  ) %>%
+  
+  add_p(
+    test = list( 
+        all_continuous() ~ "wilcox.test",
+        all_categorical() ~ "chisq.test"  
+    ),
+    pvalue_fun = ~ style_pvalue(.x, digits = 3) 
+  ) %>%
+  
+  modify_header(label = "**Variable**", 
+                stat_by = "**{level}**") %>% 
+  modify_caption("**Table 2. Sample Characteristics by Heart Disease**") %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Quantitative Variables: Median (IQR), Wilcoxon Test | Categorical Variables: N (%), Chi-Squared Test."
+  )
+
+tabela_bivariada
+```
+
+### Heatmap
+
+```{r}
+heart_matrix_data <- heart %>%
+  select(Age, RestingBP, Cholesterol, MaxHR, Oldpeak) 
+matriz_cor_completa <- cor(heart_matrix_data,method=c("spearman"))
+corrplot(
+  matriz_cor_completa, 
+  method = "color",                 
+  type = "upper",                   
+  tl.col = "black",                 
+  tl.srt = 45,                      
+  addCoef.col = "black",            
+  number.cex = 0.7,                 
+  title = "Heatmap", 
+  mar = c(0, 0, 3, 0),
+  diag=F,
+)
+```
+
+## Model
+
+```{r}
+heart_final <- heart %>%
+  mutate(ST_Slope = as.factor(ST_Slope)) %>% 
+  mutate(ST_Slope = relevel(ST_Slope, ref = "Flat"))
+modelo_logistico_final <- glm(
+  HeartDisease ~ Age + Sex + ChestPainType + RestingBP + 
+                 Cholesterol + FastingBS + RestingECG + 
+                 MaxHR + ExerciseAngina + Oldpeak + ST_Slope, 
+  data = heart_final, 
+  family = binomial
+)
+tbl_modelo_logistico_final <- tbl_regression(
+  modelo_logistico_final, 
+  exponentiate = TRUE 
+) %>%
+  add_n() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ paste0("Total N = ", nobs(modelo_logistico_final))
+  ) %>%
+  modify_caption("**Table 3. Logistic Regression Table**")
+tbl_modelo_logistico_final
+```
+
+### Forest Plot
+
+```{r}
+plot_data_sorted <- tidy(modelo_logistico_final, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    term_label = case_when(
+      term == "Age" ~ "Age (per year)",
+      term == "SexM" ~ "Sex (Male vs Female)",
+      term == "ChestPainTypeATA" ~ "Atypical Angina (vs Asympt.)", 
+      term == "ChestPainTypeNAP" ~ "Non-Anginal Pain (vs Asympt.)",
+      term == "ChestPainTypeTA"  ~ "Typical Angina (vs Asympt.)",
+      term == "RestingBP" ~ "Resting BP (mmHg)",
+      term == "Cholesterol" ~ "Cholesterol (mg/dL)",
+      term == "FastingBS" ~ "Fasting BS (>120 vs Normal)", 
+      term == "RestingECGNormal" ~ "ECG Normal (vs LVH)",
+      term == "RestingECGST"     ~ "ECG ST-T Abnormality (vs LVH)",
+      term == "MaxHR" ~ "MaxHR (per bpm)",
+      term == "ExerciseAnginaY" ~ "Exercise Angina (Yes vs No)",
+      term == "Oldpeak" ~ "Oldpeak (ST depression)",
+      term == "ST_SlopeDown" ~ "ST-Slope Down (vs Flat)",
+      term == "ST_SlopeUp"   ~ "ST-Slope Up (vs Flat)",
+      TRUE ~ term 
+    )
+  )
+forest_plot_sorted <- ggplot(plot_data_sorted, aes(x = estimate, y = reorder(term_label, estimate))) +
+
+  geom_vline(xintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.8) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high),color = "black") +
+
+  geom_point(size = 3, color = "black") +
+  scale_x_log10(breaks = c(0.1, 0.5, 1.0, 2, 5, 10)) + 
+  
+  labs(
+    title = "Forest Plot",,
+    x = "Odds Ratio (Log Scale)",
+    y = "" 
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray30"),
+    axis.text.y = element_text(size = 10, color = "black"), 
+    plot.margin = unit(c(1, 1, 1, 1), "cm")
+  )
+forest_plot_sorted
+```
